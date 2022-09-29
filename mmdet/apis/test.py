@@ -4,7 +4,7 @@ import pickle
 import shutil
 import tempfile
 import time
-
+import numpy as np
 import mmcv
 import torch
 import torch.distributed as dist
@@ -12,6 +12,65 @@ from mmcv.image import tensor2imgs
 from mmcv.runner import get_dist_info
 
 from mmdet.core import encode_mask_results
+
+
+def iou(A, B):
+    inter = 0
+    un = 0
+    for i in range(len(A)):
+        for j in range(len(A[i])):
+            if A[i][j] and B[i][j]:
+                inter += 1
+            if A[i][j] or B[i][j]:
+                un += 1
+    return (float)(inter*1.0/un)
+
+
+def nms(results_in, iou_threshold):
+    results = sorted(results_in, key=(lambda elem : -elem[0][4]))
+ 
+    final_results = [[], []]
+    mp = dict()
+    for i in range(len(results)):
+        if (i in mp) or (results[i][0][4] < 0.4):
+            continue
+        for j in range(i + 1, len(results)):
+            if j in mp:
+                continue
+            if iou(results[i][1], results[j][1]) > iou_threshold:
+                mp[j] = 1
+        final_results[0].append(results[i][0])
+        final_results[1].append(results[i][1])
+    
+    return final_results
+
+def apply_nms(result):
+
+    for j in range(len(result)):
+
+                forklifts = []
+                for i in range(len(result[j][0][0])):
+                    forklifts.append([result[j][0][0][i], result[j][1][0][i]])
+                glamas = []
+                for i in range(len(result[j][0][1])):
+                    glamas.append([result[j][0][1][i], result[j][1][1][i]])
+                humans = []
+                for i in range(len(result[j][0][2])):
+                    humans.append([result[j][0][2][i], result[j][1][2][i]])
+                
+                forklifts = nms(forklifts, 0.3)
+                result[j][0][0] = np.array(forklifts[0])
+                result[j][1][0] = np.array(forklifts[1])
+                glamas = nms(glamas, 0.3) 
+                result[j][0][1] = np.array(glamas[0])
+                result[j][1][1] = np.array(glamas[1])
+                humans = nms(humans, 0.3)
+                result[j][0][2] = np.array(humans[0])
+                result[j][1][2] = np.array(humans[1])
+                
+
+    return result
+
 
 
 def single_gpu_test(model,
@@ -27,7 +86,8 @@ def single_gpu_test(model,
     for i, data in enumerate(data_loader):
         with torch.no_grad():
             result = model(return_loss=False, rescale=True, **data)
-
+            result = apply_nms(result)
+            
         batch_size = len(result)
         if show or out_dir:
             if batch_size == 1 and isinstance(data['img'][0], torch.Tensor):
